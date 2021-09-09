@@ -183,32 +183,43 @@ func (f *win32File) asyncIo(c *ioOperation, d *deadlineHandler, bytes uint32, er
 		cancelIoEx(f.handle, &c.o)
 	}
 
-	var timeout timeoutChan
-	if d != nil {
-		d.channelLock.Lock()
-		timeout = d.channel
-		d.channelLock.Unlock()
-	}
-
 	var r ioResult
-	select {
-	case r = <-c.ch:
-		err = r.err
-		if err == syscall.ERROR_OPERATION_ABORTED {
-			if f.closing.isSet() {
-				err = ErrFileClosed
-			}
-		} else if err != nil && f.socket {
-			// err is from Win32. Query the overlapped structure to get the winsock error.
-			var bytes, flags uint32
-			err = wsaGetOverlappedResult(f.handle, &c.o, &bytes, false, &flags)
+
+	for {
+		var timeout timeoutChan
+		if d != nil {
+			d.channelLock.RLock()
+			timeout = d.channel
+			d.channelLock.RUnlock()
 		}
-	case <-timeout:
-		cancelIoEx(f.handle, &c.o)
-		r = <-c.ch
-		err = r.err
-		if err == syscall.ERROR_OPERATION_ABORTED {
-			err = ErrTimeout
+
+		select {
+		case r = <-c.ch:
+			err = r.err
+			if err == syscall.ERROR_OPERATION_ABORTED {
+				if f.closing.isSet() {
+					err = ErrFileClosed
+				}
+			} else if err != nil && f.socket {
+				// err is from Win32. Query the overlapped structure to get the winsock error.
+				var bytes, flags uint32
+				err = wsaGetOverlappedResult(f.handle, &c.o, &bytes, false, &flags)
+			}
+			break
+		case <-timeout:
+			if d != nil {
+				if !d.timedout.isSet() {
+					continue
+				}
+			}
+
+			cancelIoEx(f.handle, &c.o)
+			r = <-c.ch
+			err = r.err
+			if err == syscall.ERROR_OPERATION_ABORTED {
+				err = ErrTimeout
+			}
+			break
 		}
 	}
 
