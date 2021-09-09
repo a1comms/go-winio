@@ -185,6 +185,7 @@ func (f *win32File) asyncIo(c *ioOperation, d *deadlineHandler, bytes uint32, er
 
 	var r ioResult
 
+loop:
 	for {
 		var timeout timeoutChan
 		if d != nil {
@@ -205,11 +206,11 @@ func (f *win32File) asyncIo(c *ioOperation, d *deadlineHandler, bytes uint32, er
 				var bytes, flags uint32
 				err = wsaGetOverlappedResult(f.handle, &c.o, &bytes, false, &flags)
 			}
-			break
+			break loop
 		case <-timeout:
 			if d != nil {
 				if !d.timedout.isSet() {
-					continue
+					continue loop
 				}
 			}
 
@@ -219,7 +220,7 @@ func (f *win32File) asyncIo(c *ioOperation, d *deadlineHandler, bytes uint32, er
 			if err == syscall.ERROR_OPERATION_ABORTED {
 				err = ErrTimeout
 			}
-			break
+			break loop
 		}
 	}
 
